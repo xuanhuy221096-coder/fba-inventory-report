@@ -9,6 +9,8 @@ Generate a professional multi-tab Excel inventory report from 2 Amazon CSV files
 
 The report identifies stock health, flags dead/slow/OOS items, and recommends restock quantities with shipping method (sea vs air) based on lead times and sell velocity.
 
+**Velocity method:** daily velocity is a weighted blend of 3 lookback windows — `0.5×(t30/30) + 0.3×(t7/7) + 0.2×(t90/90)` — so one unusual week or month can't distort restock numbers. Safety stock scales with each SKU's sell-rate variability (CV across the 3 windows), so erratic sellers get a deeper buffer. See `references/report-spec.md` → Derived Metrics & Restock Logic.
+
 ---
 
 ## Quick Start
@@ -16,8 +18,9 @@ The report identifies stock health, flags dead/slow/OOS items, and recommends re
 1. User uploads 2 CSV files (FBA Inventory + Business Report by Child ASIN)
 2. Read `/mnt/skills/public/xlsx/SKILL.md` for Excel generation best practices
 3. Run the report generator script: `python {skill_path}/scripts/generate_report.py <fba_inventory.csv> <business_report.csv>`
-4. Present the output file to the user with `present_files`
-5. Provide a brief text summary of key findings
+4. **Check the script output for the self-check line.** It must print `✅ Self-check passed (N SKUs verified)`. If it raises `REPORT VERIFY FAILED`, do NOT present the file — read the error, fix the logic, and re-run. Never bypass the self-check.
+5. Present the output file to the user with `present_files`
+6. Provide a brief text summary of key findings
 
 If the script fails or the user wants customization, read `references/report-spec.md` for the full specification and build manually.
 
