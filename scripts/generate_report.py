@@ -355,7 +355,7 @@ def build_restock_order(wb, merged, config):
     ws['A3'] = f'Min order: {config["min_order"]} units | Lead: Prep {config["prep"]}d + Sea {config["sea"]}d / Air {config["air"]}d + Check-in {config["checkin"]}d | Safety: {config["safety"]}d | Target: {config["target"]}d cover'
     ws['A3'].font = Font(size=9, color='7F8C8D', italic=True)
 
-    headers = ['#', 'Urgency', 'Model', 'Color', 'SKU', 'Ship Method', 'Order Qty', 'Available', 'Inbound', 'Total Supply', 'Daily Vel.', 'Days Left', 'Note']
+    headers = ['#', 'Urgency', 'Model', 'Color', 'ASIN', 'Ship Method', 'Order Qty', 'Available', 'Inbound', 'Total Supply', 'Daily Vel.', 'Days Left', 'Note']
     for col_idx, h in enumerate(headers, 1):
         cell = ws.cell(row=5, column=col_idx, value=h)
         cell.font = HEADER_FONT
@@ -373,7 +373,7 @@ def build_restock_order(wb, merged, config):
         for _, r in subset.iterrows():
             fill_color, urgency_font = URGENCY_COLORS[action_type]
             total_supply = int(r['total_fba'] + r['inbound-quantity'])
-            data = [item_num, r['Restock Action'], r['Model'], r['Color'], r['sku'],
+            data = [item_num, r['Restock Action'], r['Model'], r['Color'], r['asin'],
                     r['Ship Method'], int(r['Restock Qty']), int(r['available']),
                     int(r['inbound-quantity']), total_supply,
                     round(r['daily_velocity'], 1),
@@ -409,7 +409,7 @@ def build_restock_order(wb, merged, config):
 def build_inventory_detail(wb, merged):
     ws = wb.create_sheet("Inventory Detail")
 
-    headers = ['Status', 'Model', 'Color', 'SKU', 'ASIN', 'Price',
+    headers = ['Status', 'Model', 'Color', 'ASIN', 'Price',
                'Available', 'Reserved', 'Inbound', 'Total FBA',
                'Sold 7d', 'Sold 30d', 'Sold 90d', 'Daily Vel.', 'Days Left', 'Sell-Through',
                'Sessions', 'Units Ordered', 'CVR%', 'Revenue 30d',
@@ -419,7 +419,7 @@ def build_inventory_detail(wb, merged):
     for col_idx, h in enumerate(headers, 1):
         cell = ws.cell(row=1, column=col_idx, value=h)
         cell.font = HEADER_FONT
-        cell.fill = PatternFill('solid', fgColor='E74C3C' if col_idx >= 27 else '2C3E50')
+        cell.fill = PatternFill('solid', fgColor='E74C3C' if col_idx >= 26 else '2C3E50')
         cell.alignment = Alignment(horizontal='center', wrap_text=True)
         cell.border = THIN_BORDER
 
@@ -429,7 +429,7 @@ def build_inventory_detail(wb, merged):
     sorted_df = merged.sort_values(['Model', 'Color'])
     for row_idx, (_, r) in enumerate(sorted_df.iterrows(), 2):
         data = [
-            r['status'], r['Model'], r['Color'], r['sku'], r['asin'], r['your-price'],
+            r['status'], r['Model'], r['Color'], r['asin'], r['your-price'],
             int(r['available']), int(r['reserved_total']), int(r['inbound-quantity']), int(r['total_fba']),
             int(r['units-shipped-t7']), int(r['units-shipped-t30']), int(r['units-shipped-t90']),
             round(r['daily_velocity'], 1), int(r['days_remaining']) if r['days_remaining'] < 9999 else 'N/A',
@@ -448,13 +448,13 @@ def build_inventory_detail(wb, merged):
             cell.font = NORMAL_FONT
             cell.border = THIN_BORDER
             cell.fill = PatternFill('solid', fgColor=fill_color)
-            if col_idx in [6, 20, 24]:
+            if col_idx in [5, 19, 23]:
                 cell.number_format = '$#,##0.00'
-            if col_idx in [7, 8, 9, 10, 11, 12, 13, 14, 21, 22, 23, 29]:
+            if col_idx in [6, 7, 8, 9, 10, 11, 12, 13, 20, 21, 22, 28]:
                 cell.alignment = Alignment(horizontal='center')
-        ws.cell(row=row_idx, column=27).font = BOLD_FONT
+        ws.cell(row=row_idx, column=26).font = BOLD_FONT
 
-    widths = [18, 28, 16, 16, 14, 8, 8, 8, 8, 8, 7, 7, 7, 7, 8, 8, 8, 8, 6, 10, 8, 8, 8, 8, 8, 10, 16, 16, 10, 45]
+    widths = [18, 28, 16, 14, 8, 8, 8, 8, 8, 7, 7, 7, 7, 8, 8, 8, 8, 6, 10, 8, 8, 8, 8, 8, 10, 16, 16, 10, 45]
     for i, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = 'A2'
@@ -469,7 +469,7 @@ def build_action_items(wb, merged):
     ws['A1'].fill = PatternFill('solid', fgColor='E74C3C')
     ws['A1'].alignment = Alignment(horizontal='center')
 
-    headers = ['Priority', 'Model', 'Color', 'SKU', 'Issue', 'Available', 'Ship Method', 'Recommendation']
+    headers = ['Priority', 'Model', 'Color', 'ASIN', 'Issue', 'Available', 'Ship Method', 'Recommendation']
     for col_idx, h in enumerate(headers, 1):
         cell = ws.cell(row=3, column=col_idx, value=h)
         cell.font = Font(bold=True, size=10, color='FFFFFF', name='Arial')
@@ -488,17 +488,17 @@ def build_action_items(wb, merged):
 
     # Dead stock
     for _, r in merged[merged['status'] == '🔴 DEAD STOCK'].iterrows():
-        vals = ['🔴 URGENT', r['Model'], r['Color'], r['sku'], 'Dead stock - 0 sales 90d', int(r['available']), 'N/A', 'Remove / Liquidate']
+        vals = ['🔴 URGENT', r['Model'], r['Color'], r['asin'], 'Dead stock - 0 sales 90d', int(r['available']), 'N/A', 'Remove / Liquidate']
         action_row = write_row(action_row, vals, 'FADBD8')
 
     # OOS
     for _, r in merged[merged['status'] == '⚫ OOS'].iterrows():
-        vals = ['⚫ URGENT', r['Model'], r['Color'], r['sku'], f'OOS - selling {int(r["units-shipped-t30"])}/mo', 0, r['Ship Method'], r['Restock Note']]
+        vals = ['⚫ URGENT', r['Model'], r['Color'], r['asin'], f'OOS - selling {int(r["units-shipped-t30"])}/mo', 0, r['Ship Method'], r['Restock Note']]
         action_row = write_row(action_row, vals, 'D5D8DC')
 
     # Low stock
     for _, r in merged[merged['status'] == '🔵 LOW STOCK'].iterrows():
-        vals = ['🔵 HIGH', r['Model'], r['Color'], r['sku'], f'Low stock - {int(r["days_remaining"])}d @ {r["daily_velocity"]:.1f}/d',
+        vals = ['🔵 HIGH', r['Model'], r['Color'], r['asin'], f'Low stock - {int(r["days_remaining"])}d @ {r["daily_velocity"]:.1f}/d',
                 int(r['available']), r['Ship Method'], r['Restock Note']]
         action_row = write_row(action_row, vals, 'D6EAF8')
 
@@ -506,14 +506,14 @@ def build_action_items(wb, merged):
     for _, r in merged[merged['Restock Action'] == '🚨 AIR URGENT'].iterrows():
         if r['status'] in ['🔴 DEAD STOCK', '⚫ OOS', '🔵 LOW STOCK']:
             continue
-        vals = ['🚨 RESTOCK', r['Model'], r['Color'], r['sku'],
+        vals = ['🚨 RESTOCK', r['Model'], r['Color'], r['asin'],
                 f'{int(r["days_remaining"])}d left, vel={r["daily_velocity"]:.1f}/d',
                 int(r['available']), 'AIR URGENT', f'Rush air {int(r["Restock Qty"])} units']
         action_row = write_row(action_row, vals, 'F5B7B1')
 
     # Slow movers
     for _, r in merged[merged['status'].str.contains('SLOW')].sort_values('days_remaining', ascending=False).iterrows():
-        vals = ['🟡 SLOW', r['Model'], r['Color'], r['sku'],
+        vals = ['🟡 SLOW', r['Model'], r['Color'], r['asin'],
                 f'{int(r["days_remaining"])}d supply, {int(r["aged_181plus"])} aged 181+',
                 int(r['available']), 'N/A', 'Run Sale / Remove']
         action_row = write_row(action_row, vals, 'FDEBD0')
