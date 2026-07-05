@@ -113,11 +113,11 @@ def parse_model_color(name):
         return ('Unknown', 'N/A')
     name = str(name)
 
-    # Model detection (order matters: specific before general)
+    # Model detection (order matters: specific before general).
+    # NOTE: 1500-series checks must run BEFORE their 2500/3500 counterparts,
+    # because some 1500 titles contain "Not for Ram 2500/3500" / similar
+    # exclusion text that would otherwise be misclassified.
     model = 'Other'
-    model_rules = [
-        (['Super Duty', 'F250', 'F350', 'F450'], 'F250/F350/F450 Super Duty'),
-    ]
 
     if any(k in name for k in ['Super Duty', 'F250', 'F350', 'F450']):
         model = 'F250/F350/F450 Super Duty'
@@ -128,18 +128,20 @@ def parse_model_color(name):
             model = 'F150 / Bronco'
         else:
             model = 'F150'
-    elif 'Silverado 2500' in name:
-        model = 'Silverado 2500/3500 HD'
     elif 'Extended Tow Hook' in name and 'Silverado 1500' in name:
         model = 'Silverado 1500 Extended'
     elif 'Silverado 1500' in name:
         model = 'Silverado 1500'
+    elif 'Silverado 2500' in name or 'Silverado 3500' in name:
+        model = 'Silverado 2500/3500 HD'
     elif 'Sierra 1500' in name:
         model = 'Sierra 1500'
-    elif 'Ram 2500' in name:
-        model = 'Ram 2500/3500'
+    elif 'Sierra 2500' in name or 'Sierra 3500' in name:
+        model = 'Sierra 2500/3500 HD'
     elif 'Ram 1500' in name:
         model = 'Ram 1500'
+    elif 'Ram 2500' in name or 'Ram 3500' in name:
+        model = 'Ram 2500/3500'
     elif 'Colorado' in name or 'Canyon' in name:
         model = 'Colorado / Canyon'
     elif 'Tire Valve' in name:
