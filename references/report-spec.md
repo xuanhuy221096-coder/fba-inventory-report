@@ -147,15 +147,29 @@ safety_units = daily_velocity * SAFETY_DAYS * (1 + vel_cv)
 3. If velocity ≈ 0 but t90 > 5 → use fallback velocity: units-shipped-t90 / 90
 
 Then check timing (SEA_TOTAL = prep+sea+checkin, AIR_TOTAL = prep+air+checkin):
-4. If total_days > SEA_TOTAL + SAFETY_DAYS → 🚢 Sea
+
+REORDER_POINT = SEA_TOTAL + SAFETY_DAYS
+# The gate: an order is only triggered when coverage FALLS TO the reorder
+# point. Above it, do nothing — ordering earlier just parks cash in inventory.
+
+4. If total_days > REORDER_POINT → ✅ OK, no restock
+   (note: "Covered {total_days}d, reorder at ≤{REORDER_POINT}d")
+5. Elif total_days > AIR_TOTAL + SAFETY_DAYS → 🚢 Sea
    qty = (SEA_TOTAL + TARGET_COVER) × vel + safety_units − total_supply
-5. Elif total_days > AIR_TOTAL + SAFETY_DAYS → ✈️ Air
+   (if qty ≤ 0 → ✅ OK)
+6. Elif total_days > AIR_TOTAL → ✈️ Air (sea can no longer arrive in time)
    qty = (SEA_TOTAL + TARGET_COVER) × vel + safety_units − total_supply
-6. Else → 🚨 AIR URGENT
+7. Else → 🚨 AIR URGENT
    qty = (AIR_TOTAL + TARGET_COVER) × vel + safety_units − total_supply
 
-Order qty is a reorder-point target: cover the lead time + TARGET_COVER days of
-demand, plus safety, minus what's already on hand and inbound.
+Order qty is an order-up-to target: cover the lead time + TARGET_COVER days of
+demand, plus safety, minus what's already on hand and inbound. The trigger
+(step 4) and the quantity are separate concepts — do not merge them.
+
+# HISTORY (2026-07-19): a previous version of this spec had no step-4 gate;
+# the "> SEA_TOTAL + SAFETY" branch itself placed the sea order, so every SKU
+# under ~(SEA_TOTAL + TARGET_COVER + safety) days of cover got an order —
+# SKUs with 87–100d coverage were being told to restock. Keep the gate.
 
 Apply MIN_ORDER: if qty > 0 and qty < MIN_ORDER, round up to MIN_ORDER
 ```

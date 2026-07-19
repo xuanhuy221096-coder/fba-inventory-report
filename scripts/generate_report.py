@@ -7,7 +7,7 @@ Usage:
 
 Options:
     --prep-days N        Production + labeling days (default: 6)
-    --sea-days N         Sea freight days (default: 30)
+    --sea-days N         Sea freight days (default: 34 → prep+sea = 40d normal quarters; raise for Q4)
     --air-days N         Air freight days (default: 15)
     --checkin-days N     Amazon check-in days (default: 7)
     --safety-days N      Safety stock days (default: 14)
@@ -113,12 +113,15 @@ def parse_model_color(name):
         return ('Unknown', 'N/A')
     name = str(name)
 
-    # Model detection (order matters: specific before general).
-    # NOTE: 1500-series checks must run BEFORE their 2500/3500 counterparts,
-    # because some 1500 titles contain "Not for Ram 2500/3500" / similar
-    # exclusion text that would otherwise be misclassified.
-    model = 'Other'
+    # Only look at the PRIMARY compatibility text for model detection:
+    # drop any "Not Fit / Not for / Not Compatible" clause and everything after,
+    # so a negative mention (e.g. "Not Fit for Ram 2500/3500") can't hijack the model.
+    import re as _re
+    orig_name = name
+    name = _re.split(r'\(?\s*Not\s+(?:Fit|for|Compatible)', name, flags=_re.IGNORECASE)[0]
 
+    # Model detection (order matters: specific before general)
+    model = 'Other'
     if any(k in name for k in ['Super Duty', 'F250', 'F350', 'F450']):
         model = 'F250/F350/F450 Super Duty'
     elif 'F150' in name or 'F-150' in name:
@@ -128,30 +131,33 @@ def parse_model_color(name):
             model = 'F150 / Bronco'
         else:
             model = 'F150'
+    elif 'Silverado 2500' in name or 'Silverado 3500' in name:
+        model = 'Silverado 2500/3500 HD'
+    elif 'Sierra 2500' in name or 'Sierra 3500' in name:
+        model = 'Sierra 2500/3500 HD'
     elif 'Extended Tow Hook' in name and 'Silverado 1500' in name:
         model = 'Silverado 1500 Extended'
     elif 'Silverado 1500' in name:
         model = 'Silverado 1500'
-    elif 'Silverado 2500' in name or 'Silverado 3500' in name:
-        model = 'Silverado 2500/3500 HD'
     elif 'Sierra 1500' in name:
         model = 'Sierra 1500'
-    elif 'Sierra 2500' in name or 'Sierra 3500' in name:
-        model = 'Sierra 2500/3500 HD'
+    elif 'Ram 2500' in name:
+        model = 'Ram 2500/3500'
     elif 'Ram 1500' in name:
         model = 'Ram 1500'
-    elif 'Ram 2500' in name or 'Ram 3500' in name:
-        model = 'Ram 2500/3500'
     elif 'Colorado' in name or 'Canyon' in name:
         model = 'Colorado / Canyon'
     elif 'Tire Valve' in name:
         model = 'Tire Valve Stem Caps'
 
-    # Color detection
+    # Color detection (use full original title)
+    name = orig_name
     color = 'N/A'
-    color_match = re.search(r'\(([^)]+)\)\s*$', name)
+    color_match = re.search(r'\(([^)]+)\)\s*$', str(name))
     if color_match:
-        color = color_match.group(1).strip()
+        cand = color_match.group(1).strip()
+        _noncolor = {'Ball', 'Balls', 'Set', 'Pack', 'Pair', '2 Pack', '4 Pack'}
+        color = 'N/A' if cand in _noncolor else cand
     else:
         color_match2 = re.search(r',\s*(\w[\w\s]*?)\s*$', name)
         if color_match2:
@@ -232,13 +238,19 @@ def compute_restock(row, config):
     sea_total = config['prep'] + config['sea'] + config['checkin']
     air_total = config['prep'] + config['air'] + config['checkin']
 
-    if total_days > (sea_total + config['safety']):
+    # Reorder point: only trigger an order when coverage falls to lead + safety.
+    # Above that, do nothing — ordering earlier just parks cash in inventory.
+    reorder_point_sea = sea_total + config['safety']
+    if total_days > reorder_point_sea:
+        return ('✅ OK', 'N/A', 0, f'Covered {int(total_days)}d (reorder at ≤{int(reorder_point_sea)}d)')
+
+    if total_days > (air_total + config['safety']):
         qty = max(0, round((sea_total + config['target']) * vel + safety_units - total_supply))
         if qty <= 0:
             return ('✅ OK', 'N/A', 0, f'Covered {int(total_days)}d')
         qty = max(qty, config['min_order'])
         return ('🚢 Sea', 'Sea Freight', qty, f'{int(total_days)}d left → order {qty} by sea')
-    elif total_days > (air_total + config['safety']):
+    elif total_days > air_total:
         qty = max(0, round((sea_total + config['target']) * vel + safety_units - total_supply))
         qty = max(qty, config['min_order'])
         return ('✈️ Air', 'Air Freight', qty, f'{int(total_days)}d left → air {qty} units')
@@ -409,7 +421,7 @@ def build_restock_order(wb, merged, config):
 def build_inventory_detail(wb, merged):
     ws = wb.create_sheet("Inventory Detail")
 
-    headers = ['Status', 'Model', 'Color', 'ASIN', 'Price',
+    headers = ['Status', 'Model', 'Color', 'ASIN', 'SKU', 'Price',
                'Available', 'Reserved', 'Inbound', 'Total FBA',
                'Sold 7d', 'Sold 30d', 'Sold 90d', 'Daily Vel.', 'Days Left', 'Sell-Through',
                'Sessions', 'Units Ordered', 'CVR%', 'Revenue 30d',
@@ -419,7 +431,7 @@ def build_inventory_detail(wb, merged):
     for col_idx, h in enumerate(headers, 1):
         cell = ws.cell(row=1, column=col_idx, value=h)
         cell.font = HEADER_FONT
-        cell.fill = PatternFill('solid', fgColor='E74C3C' if col_idx >= 26 else '2C3E50')
+        cell.fill = PatternFill('solid', fgColor='E74C3C' if col_idx >= 27 else '2C3E50')
         cell.alignment = Alignment(horizontal='center', wrap_text=True)
         cell.border = THIN_BORDER
 
@@ -429,7 +441,7 @@ def build_inventory_detail(wb, merged):
     sorted_df = merged.sort_values(['Model', 'Color'])
     for row_idx, (_, r) in enumerate(sorted_df.iterrows(), 2):
         data = [
-            r['status'], r['Model'], r['Color'], r['asin'], r['your-price'],
+            r['status'], r['Model'], r['Color'], r['asin'], r['sku'], r['your-price'],
             int(r['available']), int(r['reserved_total']), int(r['inbound-quantity']), int(r['total_fba']),
             int(r['units-shipped-t7']), int(r['units-shipped-t30']), int(r['units-shipped-t90']),
             round(r['daily_velocity'], 1), int(r['days_remaining']) if r['days_remaining'] < 9999 else 'N/A',
@@ -448,13 +460,13 @@ def build_inventory_detail(wb, merged):
             cell.font = NORMAL_FONT
             cell.border = THIN_BORDER
             cell.fill = PatternFill('solid', fgColor=fill_color)
-            if col_idx in [5, 19, 23]:
+            if col_idx in [6, 20, 24]:
                 cell.number_format = '$#,##0.00'
-            if col_idx in [6, 7, 8, 9, 10, 11, 12, 13, 20, 21, 22, 28]:
+            if col_idx in [7, 8, 9, 10, 11, 12, 13, 14, 21, 22, 23, 29]:
                 cell.alignment = Alignment(horizontal='center')
-        ws.cell(row=row_idx, column=26).font = BOLD_FONT
+        ws.cell(row=row_idx, column=27).font = BOLD_FONT
 
-    widths = [18, 28, 16, 14, 8, 8, 8, 8, 8, 7, 7, 7, 7, 8, 8, 8, 8, 6, 10, 8, 8, 8, 8, 8, 10, 16, 16, 10, 45]
+    widths = [18, 28, 16, 16, 14, 8, 8, 8, 8, 8, 7, 7, 7, 7, 8, 8, 8, 8, 6, 10, 8, 8, 8, 8, 8, 10, 16, 16, 10, 45]
     for i, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = 'A2'
@@ -606,7 +618,7 @@ if __name__ == '__main__':
     parser.add_argument('file1', help='First CSV file (auto-detected)')
     parser.add_argument('file2', help='Second CSV file (auto-detected)')
     parser.add_argument('--prep-days', type=int, default=6)
-    parser.add_argument('--sea-days', type=int, default=30)
+    parser.add_argument('--sea-days', type=int, default=34)  # prep 6 + sea 34 = 40d real lead (normal quarters; raise for Q4)
     parser.add_argument('--air-days', type=int, default=15)
     parser.add_argument('--checkin-days', type=int, default=7)
     parser.add_argument('--safety-days', type=int, default=14)
