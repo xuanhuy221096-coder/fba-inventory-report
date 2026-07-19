@@ -140,7 +140,10 @@ def parse_model_color(name):
     elif 'Silverado 1500' in name:
         model = 'Silverado 1500'
     elif 'Sierra 1500' in name:
-        model = 'Sierra 1500'
+        if 'No-Gap' in name or 'No Gap' in name:
+            model = 'Sierra 1500 Upgraded'
+        else:
+            model = 'Sierra 1500'
     elif 'Ram 2500' in name:
         model = 'Ram 2500/3500'
     elif 'Ram 1500' in name:

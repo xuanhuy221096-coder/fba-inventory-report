@@ -69,9 +69,11 @@ Check keywords in order of specificity (first match wins):
 | `F150` + `Bronco` + `Tundra` | F150 / Bronco / Tundra |
 | `F150` + `Bronco` | F150 / Bronco |
 | `F150` | F150 |
-| `Silverado 2500` | Silverado 2500/3500 HD |
+| `Silverado 2500` or `Silverado 3500` | Silverado 2500/3500 HD |
+| `Sierra 2500` or `Sierra 3500` | Sierra 2500/3500 HD |
 | `Extended Tow Hook` + `Silverado 1500` | Silverado 1500 Extended |
 | `Silverado 1500` | Silverado 1500 |
+| `Sierra 1500` + (`No-Gap` or `No Gap`) | Sierra 1500 Upgraded |
 | `Sierra 1500` | Sierra 1500 |
 | `Ram 2500` or `Ram 2500/3500` | Ram 2500/3500 |
 | `Ram 1500` | Ram 1500 |
