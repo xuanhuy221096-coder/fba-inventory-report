@@ -96,7 +96,7 @@ def load_and_clean(inv_path, biz_path):
         'estimated-excess-quantity', 'sell-through', 'weeks-of-cover-t30', 'weeks-of-cover-t90', 'sales-rank',
         'inv-age-0-to-90-days', 'inv-age-91-to-180-days', 'inv-age-181-to-270-days', 'inv-age-271-to-365-days',
         'inv-age-366-to-455-days', 'inv-age-456-plus-days', 'estimated-storage-cost-next-month',
-        'Total Reserved Quantity', 'unfulfillable-quantity',
+        'Total Reserved Quantity', 'unfulfillable-quantity', 'fc-transfer',
         'Reserved FC Transfer', 'Reserved Customer Order', 'Reserved FC Processing', 'Reserved Staging',
         'sales-shipped-last-7-days', 'sales-shipped-last-30-days', 'sales-shipped-last-60-days', 'sales-shipped-last-90-days',
         'your-price', 'inbound-working', 'inbound-shipped', 'inbound-received'
@@ -191,16 +191,29 @@ def _velocity_cv(row):
 def compute_metrics(merged):
     merged['daily_velocity'] = merged.apply(_blend_velocity, axis=1)
     merged['vel_cv'] = merged.apply(_velocity_cv, axis=1)
-    # On-hand = available + the 4 reserved sub-columns. Amazon's "Total Reserved
-    # Quantity" column is unreliable (often undercounts FC Transfer), so sum the parts.
-    for c in ['Reserved FC Transfer', 'Reserved Customer Order', 'Reserved FC Processing', 'Reserved Staging']:
+    # On-hand = available + FC transfer + the reserved sub-columns. Amazon's "Total
+    # Reserved Quantity" column is unreliable, so sum the parts. FC transfer (units
+    # moving between fulfillment centers) is a separate top-level column, not a
+    # reserved sub-column — include it so total_fba matches Seller Central's On-hand.
+    for c in ['Reserved FC Transfer', 'Reserved Customer Order', 'Reserved FC Processing', 'Reserved Staging', 'fc-transfer']:
         if c not in merged.columns:
             merged[c] = 0
         merged[c] = pd.to_numeric(merged[c], errors='coerce').fillna(0)
     merged['reserved_total'] = (merged['Reserved FC Transfer'] + merged['Reserved Customer Order']
                                 + merged['Reserved FC Processing'] + merged['Reserved Staging'])
-    merged['total_fba'] = merged['available'] + merged['reserved_total'] + merged['unfulfillable-quantity']
+    # total_fba = all stock physically at FBA the user can eventually sell:
+    # available + in-transit between FCs (fc-transfer) + reserved + unfulfillable.
+    # User restocks with continuous gối-đầu shipments, so in-transit stock counts as on-hand.
+    merged['total_fba'] = (merged['available'] + merged['fc-transfer']
+                           + merged['reserved_total'] + merged['unfulfillable-quantity'])
     merged['days_remaining'] = merged.apply(lambda r: round(r['total_fba'] / r['daily_velocity']) if r['daily_velocity'] > 0 else 9999, axis=1)
+    # Available-only cover: how many days the sellable-now stock lasts (ignores
+    # in-transit / FC-transfer units). Flags a fast mover whose available is thin
+    # even though TOTAL supply looks fine — risk of a temporary stockout.
+    merged['available_days'] = merged.apply(
+        lambda r: round(r['available'] / r['daily_velocity']) if r['daily_velocity'] > 0 else 9999, axis=1)
+    merged['low_available_flag'] = merged.apply(
+        lambda r: '⚠️ Available thấp' if (r['daily_velocity'] >= 1 and r['available_days'] < 14) else '', axis=1)
     merged['aged_181plus'] = (merged['inv-age-181-to-270-days'] + merged['inv-age-271-to-365-days'] +
                               merged['inv-age-366-to-455-days'] + merged['inv-age-456-plus-days'])
     return merged
@@ -276,7 +289,7 @@ def build_dashboard(wb, merged, config):
 
     ws.merge_cells('A2:H2')
     snapshot = merged['snapshot-date'].iloc[0] if 'snapshot-date' in merged.columns else 'N/A'
-    ws['A2'] = f'Snapshot: {snapshot} | Total SKUs: {len(merged)} | Available: {int(merged["available"].sum())} | Inbound: {int(merged["inbound-quantity"].sum())}'
+    ws['A2'] = f'Snapshot: {snapshot} | Total SKUs: {len(merged)} | Available: {int(merged["available"].sum())} | On-hand (incl. FC transfer): {int(merged["total_fba"].sum())} | Inbound: {int(merged["inbound-quantity"].sum())}'
     ws['A2'].font = Font(size=10, color='566573')
     ws['A2'].alignment = Alignment(horizontal='center')
 
@@ -425,16 +438,17 @@ def build_inventory_detail(wb, merged):
     ws = wb.create_sheet("Inventory Detail")
 
     headers = ['Status', 'Model', 'Color', 'ASIN', 'SKU', 'Price',
-               'Available', 'Reserved', 'Inbound', 'Total FBA',
+               'Available', 'FC Transfer', 'Reserved', 'Inbound', 'Total FBA',
                'Sold 7d', 'Sold 30d', 'Sold 90d', 'Daily Vel.', 'Days Left', 'Sell-Through',
                'Sessions', 'Units Ordered', 'CVR%', 'Revenue 30d',
                'Age 0-90', 'Age 91-180', 'Age 181+', 'Storage Cost', 'Sales Rank', 'Health',
-               'Restock Action', 'Ship Method', 'Restock Qty', 'Restock Note']
+               'Restock Action', 'Ship Method', 'Restock Qty', 'Restock Note',
+               'Avail Days', '⚠️ Note']
 
     for col_idx, h in enumerate(headers, 1):
         cell = ws.cell(row=1, column=col_idx, value=h)
         cell.font = HEADER_FONT
-        cell.fill = PatternFill('solid', fgColor='E74C3C' if col_idx >= 27 else '2C3E50')
+        cell.fill = PatternFill('solid', fgColor='E74C3C' if col_idx >= 28 else '2C3E50')
         cell.alignment = Alignment(horizontal='center', wrap_text=True)
         cell.border = THIN_BORDER
 
@@ -445,7 +459,7 @@ def build_inventory_detail(wb, merged):
     for row_idx, (_, r) in enumerate(sorted_df.iterrows(), 2):
         data = [
             r['status'], r['Model'], r['Color'], r['asin'], r['sku'], r['your-price'],
-            int(r['available']), int(r['reserved_total']), int(r['inbound-quantity']), int(r['total_fba']),
+            int(r['available']), int(r['fc-transfer']), int(r['reserved_total']), int(r['inbound-quantity']), int(r['total_fba']),
             int(r['units-shipped-t7']), int(r['units-shipped-t30']), int(r['units-shipped-t90']),
             round(r['daily_velocity'], 1), int(r['days_remaining']) if r['days_remaining'] < 9999 else 'N/A',
             r['sell-through'],
@@ -455,7 +469,8 @@ def build_inventory_detail(wb, merged):
             round(r['estimated-storage-cost-next-month'], 2),
             int(r['sales-rank']) if r['sales-rank'] > 0 else '',
             r.get('fba-inventory-level-health-status', ''),
-            r['Restock Action'], r['Ship Method'], int(r['Restock Qty']), r['Restock Note']
+            r['Restock Action'], r['Ship Method'], int(r['Restock Qty']), r['Restock Note'],
+            int(r['available_days']) if r['available_days'] < 9999 else 'N/A', r['low_available_flag']
         ]
         fill_color = STATUS_ROW_COLORS.get(r['status'], 'FFFFFF')
         for col_idx, val in enumerate(data, 1):
@@ -463,13 +478,18 @@ def build_inventory_detail(wb, merged):
             cell.font = NORMAL_FONT
             cell.border = THIN_BORDER
             cell.fill = PatternFill('solid', fgColor=fill_color)
-            if col_idx in [6, 20, 24]:
+            if col_idx in [6, 21, 25]:
                 cell.number_format = '$#,##0.00'
-            if col_idx in [7, 8, 9, 10, 11, 12, 13, 14, 21, 22, 23, 29]:
+            if col_idx in [7, 8, 9, 10, 11, 12, 13, 14, 15, 22, 23, 24, 30, 32]:
                 cell.alignment = Alignment(horizontal='center')
-        ws.cell(row=row_idx, column=27).font = BOLD_FONT
+        ws.cell(row=row_idx, column=28).font = BOLD_FONT
+        # Highlight the low-available warning cell (last column)
+        note_cell = ws.cell(row=row_idx, column=33)
+        if note_cell.value:
+            note_cell.font = BOLD_FONT
+            note_cell.fill = PatternFill('solid', fgColor='FCE4A6')
 
-    widths = [18, 28, 16, 16, 14, 8, 8, 8, 8, 8, 7, 7, 7, 7, 8, 8, 8, 8, 6, 10, 8, 8, 8, 8, 8, 10, 16, 16, 10, 45]
+    widths = [18, 28, 16, 16, 14, 8, 8, 9, 8, 8, 8, 7, 7, 7, 7, 8, 8, 8, 8, 6, 10, 8, 8, 8, 8, 8, 10, 16, 16, 10, 45, 9, 16]
     for i, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = 'A2'
@@ -511,6 +531,15 @@ def build_action_items(wb, merged):
         vals = ['⚫ URGENT', r['Model'], r['Color'], r['asin'], f'OOS - selling {int(r["units-shipped-t30"])}/mo', 0, r['Ship Method'], r['Restock Note']]
         action_row = write_row(action_row, vals, 'D5D8DC')
 
+    # Low available (fast mover, sellable-now stock thin even if total looks fine)
+    for _, r in merged[merged['low_available_flag'] != ''].sort_values('available_days').iterrows():
+        if r['status'] in ['🔴 DEAD STOCK', '⚫ OOS']:
+            continue
+        vals = ['⚠️ WATCH', r['Model'], r['Color'], r['asin'],
+                f'Available {int(r["available"])} = {int(r["available_days"])}d @ {r["daily_velocity"]:.1f}/d (total {int(r["total_fba"])})',
+                int(r['available']), r['Ship Method'], 'Push FC transfer / speed inbound']
+        action_row = write_row(action_row, vals, 'FCE4A6')
+
     # Low stock
     for _, r in merged[merged['status'] == '🔵 LOW STOCK'].iterrows():
         vals = ['🔵 HIGH', r['Model'], r['Color'], r['asin'], f'Low stock - {int(r["days_remaining"])}d @ {r["daily_velocity"]:.1f}/d',
@@ -533,7 +562,7 @@ def build_action_items(wb, merged):
                 int(r['available']), 'N/A', 'Run Sale / Remove']
         action_row = write_row(action_row, vals, 'FDEBD0')
 
-    widths = [14, 28, 16, 16, 32, 10, 16, 40]
+    widths = [14, 28, 16, 16, 42, 10, 16, 40]
     for i, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = 'A4'
@@ -544,11 +573,11 @@ def _verify_report(merged):
     Run before saving so a bad report never reaches the user silently."""
     errors = []
 
-    # 1. On-hand identity: total_fba must equal available + reserved_total + unfulfillable
-    bad = merged[(merged['total_fba'] - (merged['available'] + merged['reserved_total']
+    # 1. On-hand identity: total_fba must equal available + fc-transfer + reserved_total + unfulfillable
+    bad = merged[(merged['total_fba'] - (merged['available'] + merged['fc-transfer'] + merged['reserved_total']
                  + merged['unfulfillable-quantity'])).abs() > 0.5]
     if len(bad):
-        errors.append(f"{len(bad)} rows fail total_fba = available + reserved_total + unfulfillable")
+        errors.append(f"{len(bad)} rows fail total_fba = available + fc-transfer + reserved_total + unfulfillable")
 
     # 2. No negative core quantities
     for col in ['available', 'total_fba', 'inbound-quantity', 'reserved_total']:
@@ -604,7 +633,7 @@ def generate_report(inv_path, biz_path, config, output_path=None):
 
     print(f"✅ Report saved to: {output_path}")
     print(f"\n📦 Inventory Health Report — {merged.get('snapshot-date', pd.Series(['N/A'])).iloc[0]}")
-    print(f"Overview: {len(merged)} SKUs | {int(merged['available'].sum())} available | {int(merged['inbound-quantity'].sum())} inbound")
+    print(f"Overview: {len(merged)} SKUs | {int(merged['available'].sum())} available | {int(merged['total_fba'].sum())} on-hand (incl FC transfer) | {int(merged['inbound-quantity'].sum())} inbound")
     print(f"\nStatus:")
     for st, cnt in merged['status'].value_counts().items():
         print(f"  {st}: {cnt}")
