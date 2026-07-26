@@ -11,6 +11,8 @@ The report identifies stock health, flags dead/slow/OOS items, and recommends re
 
 **Velocity method:** daily velocity is a weighted blend of 3 lookback windows — `0.5×(t30/30) + 0.3×(t7/7) + 0.2×(t90/90)` — so one unusual week or month can't distort restock numbers. Safety stock scales with each SKU's sell-rate variability (CV across the 3 windows), so erratic sellers get a deeper buffer. See `references/report-spec.md` → Derived Metrics & Restock Logic.
 
+**On-hand / total supply:** `total_fba = available + fc-transfer + reserved + unfulfillable`, and restock is sized against `total_supply = total_fba + inbound` — i.e. ALL units the seller owns (sellable-now, in FC transfer, reserved, and in-transit shipments). This suits a continuous gối-đầu (staggered) reorder style and avoids false restock signals when stock is temporarily stuck in transfer. `available` alone (sellable now) is tracked separately and drives the ⚠️ Note stockout warning.
+
 ---
 
 ## Quick Start
@@ -63,7 +65,7 @@ The Excel file has 4 tabs:
 
 1. **Dashboard** — KPIs, lead time assumptions, status breakdown, restock summary, revenue by model
 2. **📦 Restock Order** — Only SKUs that need restocking, sorted by urgency, with order qty (min 50) and ship method
-3. **Inventory Detail** — Full SKU breakdown with Model, Color, stock levels, velocity, age, sessions, CVR, restock recommendation
+3. **Inventory Detail** — Full SKU breakdown with Model, Color, stock levels (Available, FC Transfer, Reserved, Inbound, Total FBA), velocity, age, sessions, CVR, restock recommendation, plus **Avail Days** and **⚠️ Note** (flags a fast mover — ≥1 unit/day — whose available-only cover drops under 14 days, i.e. risk of a temporary stockout even when total supply looks fine)
 4. **⚠️ Action Items** — Priority-sorted list of items needing attention (dead stock, OOS, low stock, slow movers)
 
 ---
