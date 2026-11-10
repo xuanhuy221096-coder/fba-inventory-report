@@ -51,17 +51,22 @@ merged = inv.merge(biz, left_on='asin', right_on='(Child) ASIN', how='left', suf
 
 ## Model & Color Parsing
 
-Extract two columns from `product-name`:
+Extract two columns from `product-name`. Matching is **case-insensitive**. Two title styles are supported:
 
-### Color
-Use regex to find text in parentheses at end of name:
-```python
-re.search(r'\(([^)]+)\)\s*$', name)
-```
-Fallback: check for `, ColorName` at end of string against known color list.
+- **Style A** — `... Compatible with <vehicle> ..., Silicone Rubber (Red)` (color at the very end)
+- **Style B** — `... Fit for <vehicle> Accessories (Red) | <benefit copy>` (color before the `|`)
+
+Before model detection, any `Not Fit / Not for / Not Compatible` clause (and everything after it) is dropped so a negative mention can't hijack the model.
+
+### Color / variant
+Look only at the **head** of the title (text before the first `|`):
+
+1. Last parenthetical in the head, skipping negative-fit notes (`(Not for Vertical)`), anything over 25 chars, and non-colors (`Ball`, `Set`, `Pack`, `Pair`). A leading `F150 ` is stripped (`F150 Tremor Orange` → `Tremor Orange`).
+2. Fallback: trailing `, Color` / `,Color` at the end of the head — 1–2 words whose last word is a known base color (`Deep Pink`, `Dark Orange`, `Titan Grey`...) — or a variant code such as `D2`.
+3. Otherwise `N/A`.
 
 ### Model
-Check keywords in order of specificity (first match wins):
+Tow hook titles — check keywords in order of specificity (first match wins):
 
 | Check (in order) | Model value |
 |-------------------|-------------|
@@ -69,19 +74,31 @@ Check keywords in order of specificity (first match wins):
 | `F150` + `Bronco` + `Tundra` | F150 / Bronco / Tundra |
 | `F150` + `Bronco` | F150 / Bronco |
 | `F150` | F150 |
-| `Silverado 2500` or `Silverado 3500` | Silverado 2500/3500 HD |
-| `Sierra 2500` or `Sierra 3500` | Sierra 2500/3500 HD |
-| `Extended Tow Hook` + `Silverado 1500` | Silverado 1500 Extended |
+| `Silverado [HD] 2500/3500` | Silverado 2500/3500 HD |
+| `Sierra [HD] 2500/3500` | Sierra 2500/3500 HD |
+| (`Extended Tow Hook` or `Extend Tow Hook`) + `Silverado 1500` | Silverado 1500 Extended |
 | `Silverado 1500` | Silverado 1500 |
 | `Sierra 1500` + (`No-Gap` or `No Gap`) | Sierra 1500 Upgraded |
 | `Sierra 1500` | Sierra 1500 |
-| `Ram 2500` or `Ram 2500/3500` | Ram 2500/3500 |
+| `Ram 2500` or `Ram 3500` | Ram 2500/3500 |
 | `Ram 1500` | Ram 1500 |
+| (`Colorado` or `Canyon`) + (`Z71` or `ZR2`) | Colorado Z71/ZR2 |
 | `Colorado` or `Canyon` | Colorado / Canyon |
-| `Tire Valve` | Tire Valve Stem Caps |
 | Otherwise | Other |
 
-**Adapting to other product lines:** If products are NOT tow hooks / car accessories, adapt the parsing logic. The goal is always to split the product name into a **category/model** column and a **variant/color** column.
+Titles **without** `Tow Hook` are other product lines:
+
+| Check | Model value |
+|-------|-------------|
+| `Rosary` | Car Rosary |
+| `Tire Valve` | Tire Valve Stem Caps |
+| Product type (`Hanging Storage Box`, `Hidden Storage Box`, `Storage Drawer`, `Console Organizer`, `Headlight Grille`) + vehicle (`Super Duty`, `4Runner`, `Tacoma`, `Tundra`, `RAV4`, `RAM`, `Silverado`, `Sierra`, `F150`) | `<Vehicle> <Product type>`, e.g. `Tacoma Console Hidden Storage Box` |
+| Otherwise | Other |
+
+### Business Report fallback
+If the inventory title yields `Other`/`Unknown` or color `N/A`, the Business Report `Title` for the same ASIN is parsed and used to fill the gap.
+
+**Adapting to other product lines:** add a product type / vehicle keyword to the tables in `parse_model_color()`. The goal is always to split the product name into a **category/model** column and a **variant/color** column.
 
 ---
 

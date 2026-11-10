@@ -109,66 +109,113 @@ def load_and_clean(inv_path, biz_path):
 
 
 def parse_model_color(name):
+    """Return (Model, Color) from an Amazon title.
+
+    Handles both title styles in use:
+      A) "... Compatible with <vehicle> ... , Silicone Rubber (Red)"      (color at the very end)
+      B) "... Fit for <vehicle> Accessories (Red) | <benefit copy>"       (color before the pipe)
+    plus non-tow-hook products (rosary, console organizers, storage boxes...).
+    """
     if pd.isna(name):
         return ('Unknown', 'N/A')
-    name = str(name)
+    orig_name = str(name).strip()
+    head = orig_name.split('|')[0].strip()          # style B: everything after "|" is marketing copy
 
-    # Only look at the PRIMARY compatibility text for model detection:
-    # drop any "Not Fit / Not for / Not Compatible" clause and everything after,
+    # Drop any "Not Fit / Not for / Not Compatible" clause and everything after it,
     # so a negative mention (e.g. "Not Fit for Ram 2500/3500") can't hijack the model.
-    import re as _re
-    orig_name = name
-    name = _re.split(r'\(?\s*Not\s+(?:Fit|for|Compatible)', name, flags=_re.IGNORECASE)[0]
+    pos = re.split(r'[\(\[]?\s*Not\s+(?:Fit|for|Compatible)', orig_name, flags=re.IGNORECASE)[0]
+    low = pos.lower()
 
-    # Model detection (order matters: specific before general)
+    def has(*keys):
+        return any(k in low for k in keys)
+
+    # ---------- Model ----------
     model = 'Other'
-    if any(k in name for k in ['Super Duty', 'F250', 'F350', 'F450']):
+    if 'tow hook' not in low:
+        # Non-tow-hook products: "<Vehicle> <Product type>"
+        if has('rosary'):
+            model = 'Car Rosary'
+        elif has('tire valve'):
+            model = 'Tire Valve Stem Caps'
+        else:
+            ptype = None
+            for keys, label in [
+                (('hanging storage box',), 'Hanging Storage Box'),
+                (('hidden storage box',), 'Console Hidden Storage Box'),
+                (('storage drawer',), 'Storage Drawer'),
+                (('console organizer',), 'Console Organizer'),
+                (('headlight grille',), 'Headlight Grille Decor'),
+            ]:
+                if has(*keys):
+                    ptype = label
+                    break
+            vehicle = None
+            for keys, label in [
+                (('f250', 'f350', 'f450', 'super duty'), 'Super Duty'),
+                (('4runner',), '4Runner'),
+                (('tacoma',), 'Tacoma'),
+                (('tundra',), 'Tundra'),
+                (('rav4',), 'RAV4'),
+                (('ram 1500', 'ram 2500'), 'RAM'),
+                (('silverado',), 'Silverado'),
+                (('sierra',), 'Sierra'),
+                (('f150', 'f-150'), 'F150'),
+            ]:
+                if has(*keys):
+                    vehicle = label
+                    break
+            if ptype:
+                model = f'{vehicle} {ptype}' if vehicle else ptype
+    elif has('super duty', 'f250', 'f350', 'f450'):
         model = 'F250/F350/F450 Super Duty'
-    elif 'F150' in name or 'F-150' in name:
-        if 'Bronco' in name and 'Tundra' in name:
+    elif has('f150', 'f-150'):
+        if has('bronco') and has('tundra'):
             model = 'F150 / Bronco / Tundra'
-        elif 'Bronco' in name:
+        elif has('bronco'):
             model = 'F150 / Bronco'
         else:
             model = 'F150'
-    elif 'Silverado 2500' in name or 'Silverado 3500' in name:
+    elif re.search(r'silverado\s*(?:hd\s*)?(?:2500|3500)', low):
         model = 'Silverado 2500/3500 HD'
-    elif 'Sierra 2500' in name or 'Sierra 3500' in name:
+    elif re.search(r'sierra\s*(?:hd\s*)?(?:2500|3500)', low):
         model = 'Sierra 2500/3500 HD'
-    elif 'Extended Tow Hook' in name and 'Silverado 1500' in name:
-        model = 'Silverado 1500 Extended'
-    elif 'Silverado 1500' in name:
-        model = 'Silverado 1500'
-    elif 'Sierra 1500' in name:
-        if 'No-Gap' in name or 'No Gap' in name:
-            model = 'Sierra 1500 Upgraded'
-        else:
-            model = 'Sierra 1500'
-    elif 'Ram 2500' in name:
+    elif has('silverado 1500'):
+        model = 'Silverado 1500 Extended' if re.search(r'extend(?:ed)?\s+tow hook', low) else 'Silverado 1500'
+    elif has('sierra 1500'):
+        model = 'Sierra 1500 Upgraded' if has('no-gap', 'no gap') else 'Sierra 1500'
+    elif has('ram 2500', 'ram 3500'):
         model = 'Ram 2500/3500'
-    elif 'Ram 1500' in name:
+    elif has('ram 1500'):
         model = 'Ram 1500'
-    elif 'Colorado' in name or 'Canyon' in name:
-        model = 'Colorado / Canyon'
-    elif 'Tire Valve' in name:
-        model = 'Tire Valve Stem Caps'
+    elif has('colorado', 'canyon'):
+        model = 'Colorado Z71/ZR2' if has('z71', 'zr2') else 'Colorado / Canyon'
 
-    # Color detection (use full original title)
-    name = orig_name
+    # ---------- Color / variant ----------
+    _base = {'red', 'blue', 'black', 'white', 'yellow', 'orange', 'green', 'purple', 'pink',
+             'grey', 'gray', 'brown', 'silver', 'camo', 'american'}
+    _noncolor = {'ball', 'balls', 'set', 'pack', 'pair', '2 pack', '4 pack'}
+
+    def tidy(c):
+        c = re.sub(r'\s+', ' ', c).strip()
+        c = re.sub(r'^F-?150\s+', '', c, flags=re.IGNORECASE)      # "F150 Tremor Orange" -> "Tremor Orange"
+        return c.title() if c.islower() else c
+
     color = 'N/A'
-    color_match = re.search(r'\(([^)]+)\)\s*$', str(name))
-    if color_match:
-        cand = color_match.group(1).strip()
-        _noncolor = {'Ball', 'Balls', 'Set', 'Pack', 'Pair', '2 Pack', '4 Pack'}
-        color = 'N/A' if cand in _noncolor else cand
-    else:
-        color_match2 = re.search(r',\s*(\w[\w\s]*?)\s*$', name)
-        if color_match2:
-            candidate = color_match2.group(1).strip()
-            known = ['Red', 'Blue', 'Black', 'White', 'Yellow', 'Orange', 'Green', 'Purple', 'Pink', 'American', 'Camo', 'Gray', 'Silver']
-            if candidate in known:
-                color = candidate
-
+    # 1) last parenthetical in the head that is not a negative-fit note
+    for cand in reversed(re.findall(r'\(\s*([^()]+?)\s*\)', head)):
+        c = cand.strip()
+        if c.lower().startswith('not ') or len(c) > 25 or c.lower() in _noncolor:
+            continue
+        color = tidy(c)
+        break
+    # 2) trailing ", Color" / ",Color" / ", D2" at the end of the head
+    if color == 'N/A':
+        m = re.search(r',\s*([A-Za-z][A-Za-z0-9 \-]*?)\s*$', head)
+        if m:
+            c = m.group(1).strip()
+            words = c.lower().split()
+            if (len(words) <= 2 and words[-1] in _base) or re.fullmatch(r'[A-Z]\d', c):
+                color = tidy(c)
     return (model, color)
 
 
@@ -607,6 +654,13 @@ def _verify_report(merged):
 def generate_report(inv_path, biz_path, config, output_path=None):
     merged = load_and_clean(inv_path, biz_path)
     merged[['Model', 'Color']] = merged['product-name'].apply(lambda x: pd.Series(parse_model_color(x)))
+    # Fallback: if the inventory title has no model/color, try the Business Report title for the same ASIN
+    if 'Title' in merged.columns:
+        _alt = merged['Title'].apply(lambda x: pd.Series(parse_model_color(x), index=['m', 'c']))
+        _m = merged['Model'].isin(['Other', 'Unknown']) & ~_alt['m'].isin(['Other', 'Unknown'])
+        merged.loc[_m, 'Model'] = _alt.loc[_m, 'm']
+        _c = (merged['Color'] == 'N/A') & (_alt['c'] != 'N/A')
+        merged.loc[_c, 'Color'] = _alt.loc[_c, 'c']
     merged = compute_metrics(merged)
     merged['status'] = merged.apply(assign_status, axis=1)
     merged[['Restock Action', 'Ship Method', 'Restock Qty', 'Restock Note']] = merged.apply(
